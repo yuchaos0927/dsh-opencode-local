@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "OpenCode Local Models",
+    "description": "Brings this machine's installed OpenCode client (opencode serve) into DSH as a model provider, including free-tier models. Tools stay declared, approved and executed by DSH."
+  }
+}

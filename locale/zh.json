@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "OpenCode 本地模型",
+    "description": "用本机已安装的 OpenCode 客户端（opencode serve）把它的模型接入 DSH，含免费模型。工具仍由 DSH 自己声明、审批和执行。"
+  }
+}

@@ -1,0 +1,33 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: ['22', '24']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # No `npm install` on purpose: the suites resolve the @deepseek-ai/*
+      # peers through test/loader.mjs stubs and must pass in a bare clone.
+      # If someone adds a real runtime dependency, this job fails — which is
+      # the signal we want.
+      - name: Test
+        run: npm test
+
+      - name: Verify the published file set
+        run: npm pack --dry-run
