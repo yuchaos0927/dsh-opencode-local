@@ -1,5 +1,97 @@
 # Changelog
 
+## 0.3.3 — room for the model to be taught twice
+
+The gate works, but the free model does not believe it the first time: a live GUI
+turn spent 3 steps retrying native calls before it used the `dsh-tool` envelope.
+With `steps: 6` a single tool call left two steps of headroom and any two-tool
+turn would have ended in an error.
+
+### Fixed
+
+- `MAX_STEPS` 6 → 30. Extra steps cost nothing unless a call is actually
+  refused, so the limit only ever acts as a runaway guard.
+
+## 0.3.2 — OpenCode no longer runs tools of its own
+
+`opencode serve` is a full agent with its own shell, file and edit tools, and it
+runs them inside its own process — outside Harness approval and outside the
+sandbox. That had to stop; the plugin only wants the model.
+
+### Added
+
+- **A private agent (`dsh-backend`) with every tool behind a permission gate.**
+  The service writes a config file it owns (a fresh temp directory per child,
+  passed via `OPENCODE_CONFIG`) and every session switches to that agent. The
+  adapter refuses each native tool request and tells the model to use the
+  `dsh-tool` envelope instead, which is the only path DSH executes.
+- `toolGate` setting (default on). Turning it off restores the old behaviour.
+
+### Why not simply disable the tools?
+
+Measured, not assumed. With `permissions: [{action:'*', effect:'deny'}]` the
+request declares **no tools**, and the free tier then answers
+`FreeUsageLimitError` (HTTP 429) to every call, for every free model — the same
+model that answers normally with tools declared. `ask` keeps the declaration
+(the request is served) while stopping execution at the gate.
+
+### Verified
+
+- Live, through the plugin's own service and agent switch: a "use shell to list
+  the directory" prompt produced two native calls (`shell ls -la`, then `read`),
+  both refused (`permission.asked` → `replied reject`), no command executed, and
+  the turn still ended with a text answer.
+- Live, through the adapter: with DSH tools in the prompt the model answers with
+  the `dsh-tool` envelope (`web_search`), finish `tool-calls`, no native call.
+- `test/stream.test.mjs` now also covers the refusal path and asserts the
+  `dsh-backend` agent is selected and the refusal message points at `dsh-tool`.
+- Full suite: 24/24.
+
+### Known
+
+- A refused native call costs a model step. The private agent allows 6 steps, so
+  a model that insists on native tools still gets a chance to answer.
+- The model may answer "I could not access the files" when DSH offers no tool for
+  the job; that is the gate working as intended.
+
+## 0.3.1 — an answer no longer goes missing
+
+A turn that made the model call one of OpenCode's own tools (read, grep, bash…)
+returned **no answer at all**: the Harness showed a short "thinking" block and
+finished as if the model had said nothing.
+
+### Fixed
+
+- **The turn now ends when the execution ends, not at the first step.** OpenCode
+  splits a turn into steps; a step that calls a tool ends with `finish:
+  "tool-calls"`, and the prose answer arrives in the next step. The adapter
+  broke out of the event stream at that first `session.step.ended`, so everything
+  after it — including the answer — was discarded. It now keeps listening until
+  `session.execution.succeeded` (or `session.idle` on older builds).
+
+- **Usage is summed over every step of the turn**, not just the last one.
+
+- **A turn that produces no text now fails with a message instead of ending
+  silently.** The failure names the cause: the model ran N of OpenCode's own
+  tools and never answered, or the execution failed with a provider message.
+
+### Verified
+
+- Live capture against the installed OpenCode 2.2.5 client: before the fix the
+  adapter yielded 43 reasoning characters and 0 text for a read-then-summarise
+  prompt; after it, 218 characters of answer.
+- `test/stream.test.mjs` reproduces the two-step shape, the empty-answer shape,
+  and a failed execution. The first two fail against 0.3.0 (`actual: ''` vs
+  `'Hello world'`; `actual: 'stop'` vs `'error'`) and pass against this build.
+- Full suite: 20/20 before, 23/23 after (startup, service, adapter, stream).
+
+### Known, unchanged
+
+- The model may still answer by calling OpenCode's own tools. Those run inside
+  OpenCode, are invisible to the Harness, and are not subject to its approval
+  policy. Prompt-level tool calls (`dsh-tool` envelope) keep working and are what
+  the Harness sees when the model complies.
+
 ## 0.3.0 — startup safety
 
 This release fixes the failure mode that could take the whole Harness down on

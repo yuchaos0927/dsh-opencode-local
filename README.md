@@ -77,6 +77,18 @@ OpenCode is purely a model backend.
 **Cost**: this relies on instruction-following rather than a protocol-level channel.
 Strong models comply reliably; weak ones may need the adapter's retry.
 
+### OpenCode's own tools are gated off
+
+OpenCode would otherwise run its own shell/file tools inside its process, where
+the Harness cannot approve or undo them. The service therefore starts with a
+private config (`OPENCODE_CONFIG`, a temp file this plugin owns) that defines an
+agent whose every tool sits behind a permission gate, and the adapter refuses
+each request with a hint to use the `dsh-tool` fence instead.
+
+Tools cannot simply be turned off: a request that declares no tools is answered
+with `FreeUsageLimitError` (HTTP 429) by the free tier. `ask` keeps the
+declaration and still blocks execution. Set `toolGate: false` to opt out.
+
 ## Requirements
 
 - The **OpenCode desktop app** installed (it ships `opencode-cli`), or `opencode` on `PATH`
@@ -183,6 +195,8 @@ These drive a fake CLI, so no OpenCode installation is required.
 - **No settings UI.** Adjust the profile configuration instead.
 - **No GUI tool cards.** DSH really runs the tools, but the protocol produces no native
   tool events, so visibility in the transcript is limited.
+- **A gated tool call costs a step.** The private agent allows 6 steps per turn; a model
+  that keeps reaching for native tools may spend them and then answer "I could not access it".
 - **Image input is untested in a live session.** The layer below works (the local service
   accepts data URLs).
 
