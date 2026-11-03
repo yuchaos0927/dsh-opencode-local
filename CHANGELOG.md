@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.4.0 — the model's own tool calls are used, not dropped
+
+0.3 stopped OpenCode from executing tools, but it threw the model's calls away
+and asked it to try again in the envelope format. A live turn spent three model
+steps being told no. Those calls are now forwarded instead.
+
+### Added
+
+- **`lib/native-bridge.js`** maps a native call onto the DSH tool with the same
+  meaning (`shell`/`bash` → `bash`, `read`, `write`, `edit`, `glob`, `grep`,
+  `webfetch` → `web_fetch`, `websearch` → `web_search`, `todowrite` →
+  `todo_write`). Arguments are renamed against the *target tool's* own JSON
+  schema, so `filePath` lands on `file_path` without a hand-maintained table that
+  would rot as the schemas change.
+- The adapter forwards the call, then interrupts the run
+  (`POST /api/session/{id}/interrupt`, the only working verb — `/abort` and
+  `/cancel` are 404) so OpenCode neither executes it nor spends another step.
+- `nativeToolBridge` setting (default on).
+
+### Measured
+
+- Live: "用 shell 看一下当前目录" produced `session.tool.called {name:"shell",
+  input:{command:"ls -la"}}`, bridged to `bash`, DSH ran it, and the model
+  answered from the real output. Dropped from 4 model steps to 2.
+- `POST /interrupt` at the moment of the call leaves
+  `session.execution.interrupted` within ~7ms and no permission prompt is ever
+  answered.
+- Full suite: 32/32.
+
+### Cost caveat
+
+The run is interrupted at the moment of the bridge, so that step's
+`session.step.ended` never arrives and its tokens are not counted. This follows
+from the control flow (the adapter leaves the event loop on the bridge), not from
+a measurement: the free tier ran out before the magnitude could be read.
+
+### Why the mapping declines rather than guesses
+
+`task`, `patch` and `list` are deliberately unmapped: OpenCode's subagent,
+diff-apply and directory-list have no DSH equivalent, and routing `list` to
+`glob` would invent a pattern the model never asked for. A declined bridge falls
+back to the 0.3 permission gate, so the worst case is the old behaviour.
+
 ## 0.3.3 — room for the model to be taught twice
 
 The gate works, but the free model does not believe it the first time: a live GUI

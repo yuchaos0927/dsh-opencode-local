@@ -166,5 +166,5 @@ test('the entry module never starts the service eagerly', () => {
 
 test('only the intended source files ship in lib', () => {
     const files = readdirSync(join(here, '..', 'lib')).filter((name) => name.endsWith('.js')).sort();
-    assert.deepEqual(files, ['index.js', 'local-adapter.js', 'local-service.js', 'logger.js', 'tool-gate.js', 'tool-protocol.js']);
+    assert.deepEqual(files, ['index.js', 'local-adapter.js', 'local-service.js', 'logger.js', 'native-bridge.js', 'tool-gate.js', 'tool-protocol.js']);
 });

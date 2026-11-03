@@ -89,6 +89,32 @@ Tools cannot simply be turned off: a request that declares no tools is answered
 with `FreeUsageLimitError` (HTTP 429) by the free tier. `ask` keeps the
 declaration and still blocks execution. Set `toolGate: false` to opt out.
 
+### Bridged calls (v0.4)
+
+Refusing a call is safe but wasteful: measured on a live turn, the model reaches
+for a native tool three times before it believes the instruction to use the
+envelope, and each attempt costs a model step.
+
+So when a native call names a tool DSH also has, the adapter forwards it instead
+of refusing it:
+
+```
+session.tool.called  {name:"shell", input:{command:"ls -la"}}
+   -> bridgeNativeCall() maps shell -> bash and renames arguments against
+      the target tool's own JSON schema (filePath -> file_path)
+   -> POST /api/session/{id}/interrupt   (OpenCode's run stops here)
+   -> DSH runs bash, exactly as if the model had used the envelope
+```
+
+The model's intent is preserved and executed where approval lives, and the turn
+drops from four model steps to two. Set `nativeToolBridge: false` to fall back to
+plain refusal.
+
+The mapping is schema-driven, not a field-name table: native argument keys are
+matched against the *target tool's* declared properties, and a required property
+that cannot be filled makes the bridge decline. A declined bridge is always safe
+— it falls back to the permission gate, which is the 0.3 behaviour.
+
 ## Requirements
 
 - The **OpenCode desktop app** installed (it ships `opencode-cli`), or `opencode` on `PATH`
@@ -148,6 +174,8 @@ this plugin.
 | `directory` | process cwd | Working directory reported to the local service |
 | `modelRefreshIntervalMs` | `600000` | How long the model list is cached |
 | `logLevel` | `warn` | `debug`/`info`/`warn`/`error`/`off` |
+| `toolGate` | `true` | Refuse OpenCode's own tool calls so it cannot act on your machine |
+| `nativeToolBridge` | `true` | Hand those calls to DSH instead of dropping them |
 | `logDir` | `~/.dsh/logs/dsh-opencode-local` | Log directory |
 | `logMaxBytes` / `logMaxFiles` | `524288` / `5` | Size cap and retention |
 
@@ -195,6 +223,9 @@ These drive a fake CLI, so no OpenCode installation is required.
 - **No settings UI.** Adjust the profile configuration instead.
 - **No GUI tool cards.** DSH really runs the tools, but the protocol produces no native
   tool events, so visibility in the transcript is limited.
+- **A bridged call's token usage is not counted.** The run is interrupted the moment the
+  call is forwarded, so the step's `session.step.ended` never arrives. That follows from
+  the control flow; the size of the under-report is unmeasured.
 - **A gated tool call costs a step.** The private agent allows 6 steps per turn; a model
   that keeps reaching for native tools may spend them and then answer "I could not access it".
 - **Image input is untested in a live session.** The layer below works (the local service

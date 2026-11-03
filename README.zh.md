@@ -73,6 +73,26 @@ agent：所有工具都停在权限闸门上，适配器逐条拒绝，并在拒
 不能直接把工具关掉：不声明工具的请求会被免费额度以 `FreeUsageLimitError`（HTTP 429）拒绝。
 `ask` 保留声明、同时拦住执行。把 `toolGate` 设为 `false` 可退回旧行为。
 
+### 转交（v0.4）
+
+拒绝虽然安全，但很浪费：实测模型要撞三次墙才相信「请用围栏」这条指令，每次都是一步。
+
+所以当原生调用指向一个 DSH 也有的工具时，适配器改为转交：
+
+```
+session.tool.called  {name:"shell", input:{command:"ls -la"}}
+   -> bridgeNativeCall() 把 shell 映射成 bash，并按目标工具自己的 JSON schema
+      改名参数（filePath -> file_path）
+   -> POST /api/session/{id}/interrupt   （OpenCode 这一轮到此为止）
+   -> DSH 执行 bash，与模型走围栏时完全一样
+```
+
+意图被保留下来，并且在审批所在的那一侧执行；一轮从四步降到两步。把
+`nativeToolBridge` 设为 `false` 可退回纯拒绝。
+
+映射是 schema 驱动而非字段名对照表：原生参数按**目标工具自己声明的属性**匹配，必填项填不上
+就不转交。不转交永远安全——它会退回权限闸门，也就是 0.3 的行为。
+
 ## 前置条件
 
 - 已安装 **OpenCode 桌面版**（提供 `opencode-cli`），或 `opencode` 在 `PATH` 中
@@ -124,6 +144,8 @@ dsh plugin --profile desktop add /path/to/dsh-opencode-local
 | `directory` | 进程 cwd | 传给本地服务的工作目录 |
 | `modelRefreshIntervalMs` | `600000` | 模型列表缓存时长 |
 | `logLevel` | `warn` | `debug`/`info`/`warn`/`error`/`off` |
+| `toolGate` | `true` | 拒绝 OpenCode 自带的工具调用，使其无法在你的机器上动手 |
+| `nativeToolBridge` | `true` | 把这些调用转交给 DSH 执行，而不是丢弃 |
 | `logDir` | `~/.dsh/logs/dsh-opencode-local` | 日志目录 |
 | `logMaxBytes` / `logMaxFiles` | `524288` / `5` | 单个日志上限与保留份数 |
 
@@ -162,6 +184,7 @@ node --import ./test/loader.mjs --test test/adapter.test.mjs
 - **免费额度是上游的限时策略，且有上限**。耗尽后免费模型返回空响应；可切到付费模型绕过。
 - **暂无设置界面**。调整请改 profile 配置。
 - **无工具调用的 GUI 卡片**。工具确实由 DSH 执行，但协议层不产生原生工具事件，界面可见性受限。
+- **被转交的那一步不计 token**。调用一转发就中断本轮，`session.step.ended` 不会到达（这是控制流决定的）；具体少算多少未实测。
 - **被拦截的工具调用会消耗步数**。私有 agent 每轮允许 6 步；模型若反复摸原生工具，可能耗完步数后只回一句「拿不到文件」。
 - **图片输入未在真实会话中验证**。底层（本地服务接受 data URL）已测通。
 

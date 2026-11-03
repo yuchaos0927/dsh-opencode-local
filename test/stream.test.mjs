@@ -32,6 +32,7 @@ async function fakeService(script) {
     let subscriber;
     const permissionReplies = [];
     const agentSelections = [];
+    const interrupts = [];
     const server = http.createServer((req, res) => {
         const url = req.url.split('?')[0];
         if (url === '/api/event') {
@@ -62,6 +63,13 @@ async function fakeService(script) {
                 res.writeHead(204);
                 res.end();
             });
+            return;
+        }
+        if (url.endsWith('/interrupt')) {
+            req.resume();
+            interrupts.push(url);
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end('{}');
             return;
         }
         if (url.endsWith('/agent')) {
@@ -106,6 +114,7 @@ async function fakeService(script) {
         service,
         permissionReplies,
         agentSelections,
+        interrupts,
         close: () => { subscriber?.end(); server.close(); },
     };
 }
@@ -118,12 +127,12 @@ function adapterFor(service) {
     });
 }
 
-async function run(adapter, prompt) {
+async function run(adapter, prompt, tools = []) {
     const events = [];
     for await (const event of adapter.stream({
         model: 'fake-model',
         messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
-        tools: [],
+        tools,
     })) {
         events.push(event);
     }
@@ -230,6 +239,98 @@ test('native tool calls are refused and the answer still arrives', async () => {
 
         const text = events.filter((e) => e.type === 'text-delta').map((e) => e.text).join('');
         assert.equal(text, 'answered without touching the disk');
+    }
+    finally {
+        close();
+    }
+});
+
+
+const BASH_TOOL = {
+    name: 'bash',
+    description: 'Run a shell command',
+    parameters: {
+        type: 'object',
+        properties: {
+            description: { type: 'string' },
+            command: { type: 'string' },
+            workdir: { type: 'string' },
+        },
+        required: ['description', 'command'],
+    },
+};
+
+test('a native tool call is handed to DSH instead of being dropped', async () => {
+    const { service, permissionReplies, interrupts, close } = await fakeService([
+        { type: 'session.step.started', data: { assistantMessageID: 'msg_a' } },
+        {
+            type: 'session.tool.called',
+            data: {
+                assistantMessageID: 'msg_a',
+                id: 'chatcmpl-tool-1',
+                name: 'shell',
+                input: { command: 'ls -la' },
+                executed: false,
+            },
+        },
+        // Anything the model says next belongs to the step DSH is replacing.
+        { type: 'session.text.delta', data: { delta: 'ignored after the bridge' } },
+        { type: 'session.step.ended', data: { finish: 'tool-calls', tokens: { input: 5, output: 1 } } },
+        { type: 'session.execution.interrupted', data: {} },
+    ]);
+
+    try {
+        const events = await run(adapterFor(service), 'list the directory', [BASH_TOOL]);
+
+        const calls = events.filter((e) => e.type === 'block-end' && e.block?.type === 'tool-call');
+        assert.equal(calls.length, 1, 'exactly one tool call must reach DSH');
+        assert.equal(calls[0].block.name, 'bash');
+
+        const args = JSON.parse(calls[0].block.arguments);
+        assert.equal(args.command, 'ls -la');
+        // OpenCode does not ask for a description; DSH requires one.
+        assert.equal(args.description, 'ls -la');
+
+        const finish = events.find((e) => e.type === 'finish');
+        assert.deepEqual(finish.reason, { kind: 'tool-calls' });
+
+        // A bridged turn must not also report a refusal, and the text the model
+        // produced after the call must not leak into the transcript.
+        assert.equal(permissionReplies.length, 0);
+        const text = events.filter((e) => e.type === 'text-delta').map((e) => e.text).join('');
+        assert.equal(text, '');
+
+        // OpenCode's run must be stopped, or it keeps spending steps on a call
+        // DSH already owns.
+        assert.equal(interrupts.length, 1);
+    }
+    finally {
+        close();
+    }
+});
+
+test('an unmapped native call still falls back to the refusal gate', async () => {
+    const { service, permissionReplies, close } = await fakeService([
+        { type: 'session.step.started', data: { assistantMessageID: 'msg_a' } },
+        { type: 'session.tool.called', data: { assistantMessageID: 'msg_a', id: 'c1', name: 'task', input: { prompt: 'go' } } },
+        { type: 'permission.asked', data: { id: 'per_1', action: 'task', resources: ['go'] } },
+        { type: 'session.step.ended', data: { finish: 'tool-calls', tokens: { input: 5, output: 1 } } },
+        { type: 'session.step.started', data: { assistantMessageID: 'msg_b' } },
+        { type: 'session.text.delta', data: { delta: 'done without tools' } },
+        { type: 'session.step.ended', data: { finish: 'stop', tokens: { input: 3, output: 2 } } },
+        { type: 'session.execution.succeeded', data: {} },
+    ]);
+
+    try {
+        const events = await run(adapterFor(service), 'do something native', [BASH_TOOL]);
+
+        assert.equal(permissionReplies.length, 1, 'the unmapped call must be refused');
+        assert.equal(JSON.parse(permissionReplies[0].body).decision, 'reject');
+
+        const calls = events.filter((e) => e.type === 'block-end' && e.block?.type === 'tool-call');
+        assert.equal(calls.length, 0);
+        const text = events.filter((e) => e.type === 'text-delta').map((e) => e.text).join('');
+        assert.equal(text, 'done without tools');
     }
     finally {
         close();

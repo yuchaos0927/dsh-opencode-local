@@ -2,7 +2,7 @@
   "name": "dsh-opencode-local",
   "displayName": "DSH OpenCode Local",
   "description": "把本机 OpenCode 客户端（opencode serve）的模型接入 DeepSeek Harness：复用官方客户端的本地回环服务访问免费模型，工具仍由 DSH 自己声明和执行。",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "author": "yuchao (https://github.com/yuchaos0927)",
   "license": "MIT",
   "repository": {
@@ -30,7 +30,7 @@
     "local"
   ],
   "scripts": {
-    "test": "node --import ./test/loader.mjs --test test/startup.test.mjs && node --test test/local-service.test.mjs && node --import ./test/loader.mjs --test test/adapter.test.mjs && node --import ./test/loader.mjs --test test/stream.test.mjs",
+    "test": "node --import ./test/loader.mjs --test test/startup.test.mjs && node --test test/local-service.test.mjs && node --import ./test/loader.mjs --test test/adapter.test.mjs && node --import ./test/loader.mjs --test test/stream.test.mjs && node --test test/native-bridge.test.mjs",
     "pack:local": "npm pack --pack-destination dist"
   },
   "dsh": {
